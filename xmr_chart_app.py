@@ -11,7 +11,7 @@ im = "📈"
 st.set_page_config(
     page_title="XmR Chart App",
     page_icon=im,
-    initial_sidebar_state='expanded',
+    initial_sidebar_state='auto',
     layout="wide"
 )
 
@@ -178,7 +178,7 @@ with st.expander("Click to learn how to calculate process limits for an XmR char
     col_first, col_mid, col_last = st.columns([2, 2, 2])
 
     with col_mid:
-        st.image("figures/virus_of_variation_book_cover_cropped.png", use_container_width=True)
+        st.image("figures/virus_of_variation_book_cover.png", use_container_width=True)
 
 with st.expander("Click to learn the origins of the term process behavior chart"):
     st.markdown("## A transition in nomenclature")
@@ -1243,5 +1243,6 @@ fig.update_layout(
     yaxis=dict(title="Individual Value (X)"),
     yaxis2=dict(title="Moving Range (mR)")
 )
+
 
 st.plotly_chart(fig, use_container_width=True)
