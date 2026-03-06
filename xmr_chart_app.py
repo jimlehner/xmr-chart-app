@@ -359,7 +359,7 @@ elif selected_file != "None":
 
     default_data_index = list(df.columns).index(default_data) if default_data in df.columns else None
     default_label_index = list(df.columns).index(default_label) if default_label in df.columns else None
-    default_stage_index = list(df.columns).index(default_stage) if default_stage in df.columns else None
+    default_stage_index = list(df.columns).index(default_stage) + 1 if default_stage in df.columns else 0
 
     data_column = col1.selectbox("Select the data column", df.columns, index=default_data_index, placeholder="None")
     label_column = col2.selectbox("Select the label column", df.columns, index=default_label_index, placeholder="None")
@@ -1246,3 +1246,4 @@ fig.update_layout(
 
 
 st.plotly_chart(fig, use_container_width=True)
+
