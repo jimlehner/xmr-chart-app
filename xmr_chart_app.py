@@ -374,28 +374,6 @@ elif selected_file != "None":
 if data is None:
     st.stop()
 
-st.divider()
-
-
-# --- XMR CHART DISPLAY CONTROLS ---
-st.markdown("## XmR Chart Display Controls")
-
-with st.expander("XmR Chart Display Controls"):
-    col4, col5, col6 = st.columns(3)
-
-    tick_interval = col4.number_input("Tick Interval (X)", min_value=1, step=1, key="tick_interval")
-    round_value = col5.number_input("Number of Decimal Places", min_value=0, value=1, step=1, key="rounding_value")
-    tick_angle = col6.number_input("X-Axis Tick Label Angle", min_value=0, value=0, step=15)
-
-    col7, col8, col9, col10, col11 = st.columns(5)
-    show_limits = col7.checkbox("Show Process Limits", value=True, help="Shows the process limits on the XmR chart.")
-    show_annotations = col8.checkbox("Show Annotations", value=True, help="Show the process limit and central line annotations.")
-    show_lines = col9.checkbox("Show Connecting Lines", value=True, help="Shows the lines connecting the values in the XmR chart.")
-    bound_UPL = col10.checkbox("Bound UPL", value=False, help="Prevents UPL from exceeding 100% when data is composed of percentages.")
-    bound_LPL = col11.checkbox("Bound LPL", value=True, help="Prevents LPL from being less than zero.")
-
-line_mode = "lines+markers" if show_lines else "markers"
-
 # --- QUESTIONS ---
 dataset_questions = {
     # Automated Manufacturing Line Part Lengths
@@ -879,6 +857,34 @@ if selected_file in dataset_questions:
             elif selected is not None:
                 st.error("❌ Not quite. Try again.")
 
+st.divider()
+
+# --- XMR CHART DISPLAY CONTROLS ---
+st.markdown("## XmR Chart Display Controls")
+
+with st.expander("XmR Chart Display Controls"):
+    col4, col5, col6 = st.columns(3)
+
+    tick_interval = col4.number_input("Tick Interval (X)", min_value=1, step=1, key="tick_interval")
+    round_value = col5.number_input("Number of Decimal Places", min_value=0, value=1, step=1, key="rounding_value")
+    tick_angle = col6.number_input("X-Axis Tick Label Angle", min_value=0, value=0, step=15)
+
+    col7, col8, col9, col10, col11 = st.columns(5)
+    show_limits = col7.checkbox("Show Process Limits", value=True, help="Shows the process limits on the XmR chart.")
+    show_annotations = col8.checkbox("Show Annotations", value=True, help="Show the process limit and central line annotations.")
+    show_lines = col9.checkbox("Show Connecting Lines", value=True, help="Shows the lines connecting the values in the XmR chart.")
+    bound_UPL = col10.checkbox("Bound UPL", value=False, help="Prevents UPL from exceeding 100% when data is composed of percentages.")
+    bound_LPL = col11.checkbox("Bound LPL", value=True, help="Prevents LPL from being less than zero.")
+
+    col12, col13, col14, col15, col16 = st.columns(5)
+    rule_2 = col12.checkbox("Apply Detection Rule #2", value=False, help="Rule #2 is satisfied when 8 or more values consecutive values fall on " \
+    "same side of the central line.")
+    rule_3 = col13.checkbox("Apply Detection Rule #3", value=False, help="Rule #3 is satisfied when 3 out of 4 successive values fall in the upper 25\% or lower " \
+    "25\% region between the limits on the X chart.")
+
+line_mode = "lines+markers" if show_lines else "markers"
+
+
 # --- STAGE LABEL CUSTOMIZATION ---
 # Fallback defaults
 show_stages = False
@@ -939,20 +945,99 @@ if bound_LPL:
     LPL = max(0, LPL)
 URL = 3.268*ave_mR
 
+# Calculate regions for Rule #3
+PLR = UPL - LPL
+quartile = PLR/4
+lower_zone = LPL + quartile
+upper_zone = UPL - quartile
+
+# --- RULE 2: RUNS ABOUT THE CENTRAL LINE ---
+def apply_rule_2(data, mean):
+    above = [v > mean for v in data]
+    run_mask = [False] * len(data)
+
+    # Check for runs of eight above and below central line
+    for direction in [True, False]:
+        count = 1
+        for i in range(1, len(above)):
+            if above[i] == direction and above[i-1] == direction:
+                count += 1
+            else:
+                if above[i-1] == direction and count >= 8:
+                    for j in range(i - count, i):
+                        run_mask[j] = True
+                count = 1
+        
+        # Final run
+        if above[-1] == direction and count >= 8:
+            for j in range(len(above) - count, len(above)):
+                run_mask[j] = True
+
+    return run_mask
+
+def apply_rule_3(data, UPL, LPL, mean):
+    PLR = UPL - LPL
+    quartile = PLR / 4
+    upper_zone = UPL - quartile
+    lower_zone = LPL + quartile
+
+    zone_mask = [False] * len(data)
+
+    i = 0
+    while i <= len(data) - 4:
+        window = list(data[i:i+4])
+
+        all_above = all(mean <= v <= UPL for v in window)
+        all_below = all(LPL <= v <= mean for v in window)
+
+        if all_above and sum(v >= upper_zone for v in window) >= 3:
+            for j in range(i, i+4):
+                zone_mask[j] = True
+            # skip forward until we find a point not in the upper zone
+            i += 4
+            while i < len(data) and upper_zone <= data[i] <= UPL:
+                i += 1
+
+        elif all_below and sum(v <= lower_zone for v in window) >= 3:
+            for j in range(i, i+4):
+                zone_mask[j] = True
+            # skip forward until we find a point not in the lower zone
+            i += 4
+            while i < len(data) and LPL <= data[i] <= lower_zone:
+                i += 1
+
+        else:
+            i += 1
+
+    return zone_mask
+
+def point_color(v, in_run, in_zone, above_upl, below_lpl):
+    if above_upl or below_lpl:
+        return "#d72323"    # limit violation
+    if in_run:
+        return "#FFA500"    # run of 8+
+    if in_zone:
+        return "#18B007"    # 3 of 4 in outer zone
+    return "steelblue"
 
 # --- XMR CHART PLOTTING ---
 fig = make_subplots(rows=2, cols=1, vertical_spacing=0.05)
 
 # Calculate global marker colors (used when show_stages is False)
 if show_limits:
+
+    run_mask = apply_rule_2(data, mean) if rule_2 else [False] * len(data)
+    zone_mask = apply_rule_3(data, UPL, LPL, mean) if rule_3 else [False] * len(data)
+
     if LPL <= 0:
-        x_colors = ["#d72323" if v > UPL or v <= 0 else "steelblue" for v in data]
-        x_line_colors = ["black" if v > UPL or v <= 0 else "steelblue" for v in data]
-        x_sizes = [7 if v > UPL or v <= 0 else 6 for v in data]
+        x_colors = [point_color(v, run_mask[i], zone_mask[i], v > UPL, v <= 0) for i, v in enumerate(data)]
+        x_line_colors = ["black" if v > UPL or v <= 0 or run_mask[i] or zone_mask[i] else "steelblue" for i, v in enumerate(data)]
+        x_sizes = [7 if v > UPL or v <= 0 or run_mask[i] or zone_mask[i] else 6 for i, v in enumerate(data)]
     else:
-        x_colors = ["#d72323" if v > UPL or v < LPL else "steelblue" for v in data]
-        x_line_colors = ["black" if v > UPL or v < LPL else "steelblue" for v in data]
-        x_sizes = [7 if v > UPL or v < LPL else 6 for v in data]
+        x_colors = [point_color(v, run_mask[i], zone_mask[i], v > UPL, v < LPL) for i, v in enumerate(data)]
+        x_line_colors = ["black" if v > UPL or v < LPL or run_mask[i] or zone_mask[i] else "steelblue" for i, v in enumerate(data)]
+        x_sizes = [7 if v > UPL or v < LPL or run_mask[i] or zone_mask[i] else 6 for i, v in enumerate(data)]
+
     mr_colors = ["#d72323" if v > URL else "steelblue" for v in moving_range]
     mr_line_colors = ["black" if v > URL else "steelblue" for v in moving_range]
     mr_sizes = [7 if v > URL else 6 for v in moving_range]
@@ -964,6 +1049,7 @@ else:
     mr_line_colors = ["steelblue"] * len(moving_range)
     mr_sizes = [6] * len(moving_range)
 
+# Stage display controls and plotting
 if show_stages and stage_column is not None:
     for i, stage in enumerate(unique_stages):
         stage_mask = stages == stage
@@ -977,16 +1063,23 @@ if show_stages and stage_column is not None:
         stage_LPL = max(0, stage_mean - (2.660 * stage_ave_mR))
         stage_URL = 3.268 * stage_ave_mR
 
-        # Calculate colors per stage limits
+        stage_PLR = stage_UPL - stage_LPL
+        stage_quartile = stage_PLR / 4
+        stage_upper_zone = stage_UPL - stage_quartile
+        stage_lower_zone = stage_LPL + stage_quartile
+
+        stage_run_mask = apply_rule_2(list(stage_data), stage_mean) if rule_2 else [False] * len(stage_data)
+        stage_zone_mask = apply_rule_3(list(stage_data), stage_UPL, stage_LPL, stage_mean) if rule_3 else [False] * len(stage_data)
+
         if show_limits:
             if stage_LPL <= 0:
-                s_colors = ["#d72323" if v > stage_UPL or v <= 0 else "steelblue" for v in stage_data]
-                s_line_colors = ["black" if v > stage_UPL or v <= 0 else "steelblue" for v in stage_data]
-                s_sizes = [7 if v > stage_UPL or v <= 0 else 6 for v in stage_data]
+                s_colors = [point_color(v, stage_run_mask[i], stage_zone_mask[i], v > stage_UPL, v <= 0) for i, v in enumerate(stage_data)]
+                s_line_colors = ["black" if v > stage_UPL or v <= 0 or stage_run_mask[i] or stage_zone_mask[i] else "steelblue" for i, v in enumerate(stage_data)]
+                s_sizes = [7 if v > stage_UPL or v <= 0 or stage_run_mask[i] or stage_zone_mask[i] else 6 for i, v in enumerate(stage_data)]
             else:
-                s_colors = ["#d72323" if v > stage_UPL or v < stage_LPL else "steelblue" for v in stage_data]
-                s_line_colors = ["black" if v > stage_UPL or v < stage_LPL else "steelblue" for v in stage_data]
-                s_sizes = [7 if v > stage_UPL or v < stage_LPL else 6 for v in stage_data]
+                s_colors = [point_color(v, stage_run_mask[i], stage_zone_mask[i], v > stage_UPL, v < stage_LPL) for i, v in enumerate(stage_data)]
+                s_line_colors = ["black" if v > stage_UPL or v < stage_LPL or stage_run_mask[i] or stage_zone_mask[i] else "steelblue" for i, v in enumerate(stage_data)]
+                s_sizes = [7 if v > stage_UPL or v < stage_LPL or stage_run_mask[i] or stage_zone_mask[i] else 6 for i, v in enumerate(stage_data)]
             s_mr_colors = ["#d72323" if v > stage_URL else "steelblue" for v in stage_mR]
             s_mr_line_colors = ["black" if v > stage_URL else "steelblue" for v in stage_mR]
             s_mr_sizes = [7 if v > stage_URL else 6 for v in stage_mR]
@@ -1025,8 +1118,25 @@ if show_stages and stage_column is not None:
             )
         ), row=2, col=1)
 
+        if rule_3:
+            fig.add_shape(
+                type="rect",
+                x0=stage_x[0], x1=stage_x[-1],
+                y0=stage_LPL, y1=stage_lower_zone,
+                fillcolor="gray", opacity=0.2,
+                line_width=0,
+                row=1, col=1
+            )
+            fig.add_shape(
+                type="rect",
+                x0=stage_x[0], x1=stage_x[-1],
+                y0=stage_upper_zone, y1=stage_UPL,
+                fillcolor="gray", opacity=0.2,
+                line_width=0,
+                row=1, col=1
+            )
+
 else:
-    # X chart - single trace
     fig.add_trace(go.Scatter(
         x=list(range(1, len(data) + 1)),
         y=data,
@@ -1036,7 +1146,6 @@ else:
                                                     width=1 if show_limits else 0))
     ), row=1, col=1)
 
-    # mR chart - single trace
     fig.add_trace(go.Scatter(
         x=list(range(2, len(moving_range) + 1)),
         y=moving_range,
@@ -1046,6 +1155,21 @@ else:
                                                     width=1 if show_limits else 0))
     ), row=2, col=1)
 
+    if rule_3:
+        fig.add_hrect(
+            y0=stage_LPL, y1=stage_lower_zone,
+            x0=stage_x[0], x1=stage_x[-1],
+            fillcolor="gray", opacity=0.2,
+            line_width=0,
+            row=1, col=1
+        )
+        fig.add_hrect(
+            y0=stage_upper_zone, y1=stage_UPL,
+            x0=stage_x[0], x1=stage_x[-1],
+            fillcolor="gray", opacity=0.2,
+            line_width=0,
+            row=1, col=1
+        )
 
 # --- ADD PROCESS LIMITS AND ANNOTATIONS ---
 hlines = [
@@ -1244,6 +1368,4 @@ fig.update_layout(
     yaxis2=dict(title="Moving Range (mR)")
 )
 
-
 st.plotly_chart(fig, use_container_width=True)
-
